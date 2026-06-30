@@ -36,7 +36,10 @@ few subject keywords. All the sender/domain lists are **plain arrays at the top 
 4. With **`DRY_RUN = true`** (the default), select the **`setup`** function and click
    **Run**. Approve the Gmail permission when prompted. This:
    - creates the 7 labels above,
-   - deletes the old `Tech`, `Tech/Crypto`, `Stocks`, `Scheduled` labels (emails kept),
+   - tries to delete the old `Tech`, `Tech/Crypto`, `Stocks`, `Scheduled` labels
+     (emails kept). Gmail sometimes refuses programmatic label deletion — if the log
+     says it couldn't, just delete those four by hand in **Gmail → Settings → Labels**
+     (10 seconds),
    - installs a trigger that runs every 10 minutes.
 5. Select **`run`** and click **Run**, then open **View → Logs**. You'll see lines like
    `would label [Job-search] <- no-reply@ashbyhq.com | Thank you for applying…`.

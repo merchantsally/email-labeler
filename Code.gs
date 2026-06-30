@@ -86,13 +86,24 @@ function setup() {
     }
   });
 
+  // Best-effort: Gmail sometimes refuses programmatic label deletion. Never let
+  // it abort setup (the labels + trigger below matter more). Anything it can't
+  // remove, you can delete by hand in Gmail > Settings > Labels.
+  var couldNotDelete = [];
   LABELS_TO_DELETE.forEach(function (name) {
     var label = GmailApp.getUserLabelByName(name);
-    if (label) {
+    if (!label) return;
+    try {
       label.deleteLabel();
       Logger.log('Deleted label: ' + name);
+    } catch (e) {
+      couldNotDelete.push(name);
     }
   });
+  if (couldNotDelete.length) {
+    Logger.log('Could not auto-delete: ' + couldNotDelete.join(', ') +
+               '  -> delete these by hand in Gmail > Settings > Labels.');
+  }
 
   // Reinstall the 10-minute trigger (remove any old copies first).
   ScriptApp.getProjectTriggers().forEach(function (t) {
