@@ -54,9 +54,17 @@ var JOB_DOMAINS = [
   'jobgether.com', 'indeed.com', 'jobalert.indeed.com', 'methodrecruiting.com',
   'remotehunter.com', 'fractionaljobs.io', 'jobvite.com'
 ];
-// Application-confirmation subjects, to catch company career addresses (e.g.
-// careers@somecompany.com) that aren't on a known ATS platform.
-var JOB_SUBJECT = /thank(s| you) for (applying|your (interest|application))|application (was |has been )?received|received your (application|resume)|application (status|follow.?up|update)|reviewing your application|for your application|your application (was|has been|is)|\bcandidacy\b|next steps/i;
+// Obvious application-confirmation / rejection / status subjects. These are
+// always automated no matter who "sent" them, so they go to Job-search even
+// without machine markers (and catch company career addresses like
+// careers@somecompany.com that aren't on a known ATS platform).
+var JOB_CONFIRMATION = /thank(s| you) for (applying|your (interest|application))|application (was |has been )?received|received your (application|resume)|application (status|follow.?up|update)|reviewing your application|for your application|your application (was|has been|is)|\bcandidacy\b|verify your candidate|candidate account/i;
+
+// Machine-automation header markers: present on bulk/automated mail, absent on
+// a person's 1:1 message (even one sent through an ATS). This is what lets us
+// tell an automated ATS blast from a recruiter actually writing to you.
+var AUTOMATION_HEADERS =
+  /\nlist-unsubscribe:|\nauto-submitted:\s*auto|\nprecedence:\s*(bulk|list|junk|auto)|\nx-auto-response-suppress:/i;
 
 // Newsletter: editorial / digest senders.
 var NEWSLETTER_DOMAINS = [
@@ -138,19 +146,20 @@ function run() {
 
     var msgs = thread.getMessages();
     var msg = msgs[msgs.length - 1]; // classify on the latest message
-    var label = classify(msg, clientSenders, strataSenders);
+    var decision = classify(msg, clientSenders, strataSenders);
+    var name = decision.label;
 
-    counts[label] = (counts[label] || 0) + 1;
+    counts[name] = (counts[name] || 0) + 1;
 
     if (DRY_RUN) {
-      Logger.log('would label [' + label + ']  <- ' + msg.getFrom() +
-                 '  |  ' + msg.getSubject());
+      Logger.log('would label [' + name + ']  (' + decision.reason + ')  <- ' +
+                 msg.getFrom() + '  |  ' + msg.getSubject());
     } else {
-      if (!labelCache[label]) {
-        labelCache[label] = GmailApp.getUserLabelByName(label) ||
-                            GmailApp.createLabel(label);
+      if (!labelCache[name]) {
+        labelCache[name] = GmailApp.getUserLabelByName(name) ||
+                           GmailApp.createLabel(name);
       }
-      thread.addLabel(labelCache[label]);
+      thread.addLabel(labelCache[name]);
     }
   });
 
@@ -175,48 +184,64 @@ function buildStickySenders(labelName, owner) {
 }
 
 /**
- * Decide a single label for a message. First match wins.
+ * Decide a label for a message. Returns { label, reason } - reason is shown in
+ * the dry-run log so you can see WHY each message landed where it did.
+ * First match wins.
  */
 function classify(msg, clientSenders, strataSenders) {
   var email = extractEmail(msg.getFrom());
   var subject = msg.getSubject() || '';
 
   // 1 & 2 - sticky relationships always win.
-  if (clientSenders[email]) return 'Clients';
-  if (strataSenders[email]) return 'Strata';
+  if (clientSenders[email]) return pick('Clients', 'sticky sender');
+  if (strataSenders[email]) return pick('Strata', 'sticky sender');
 
   // 3 - money / admin.
   if (senderMatches(email, MONEY_DOMAINS) || MONEY_SUBJECT.test(subject)) {
-    return 'Money-Admin';
+    return pick('Money-Admin', 'money sender/subject');
   }
 
-  // 4 - job-search: ATS / job-board platform, or an application confirmation
-  //     from a company career address. Real recruiters writing from their own
-  //     company domain don't match either and fall through to Reply-needed.
-  if (senderMatches(email, JOB_DOMAINS) || JOB_SUBJECT.test(subject)) {
-    return 'Job-search';
-  }
+  // Machine-automation signal, computed once (raw header fetch is the cost).
+  var automated = isAutomated(msg);
+  var onAts = senderMatches(email, JOB_DOMAINS);
+  var confirmation = JOB_CONFIRMATION.test(subject);
 
-  // Bulk-mail signal, computed once (raw fetch is the expensive part).
-  var bulk = hasListUnsubscribe(msg);
+  // 4a - application confirmation from a company career address (not a known
+  //      ATS platform) - always automated regardless of headers.
+  if (!onAts && confirmation) return pick('Job-search', 'application confirmation');
+
+  // 4b - mail from an ATS / job-board platform.
+  if (onAts) {
+    // Automated blast (alert, confirmation, rejection) -> Job-search.
+    if (automated) return pick('Job-search', 'ATS automated (machine headers)');
+    if (confirmation) return pick('Job-search', 'ATS confirmation (subject)');
+    // No machine markers and not a stock confirmation: a recruiter likely
+    // typed this through the ATS and wants a reply.
+    return pick('Reply-needed', 'human via ATS (no machine markers)');
+  }
 
   // 5 - newsletters.
-  if (bulk && (senderMatches(email, NEWSLETTER_DOMAINS) ||
-               NEWSLETTER_SUBJECT.test(subject))) {
-    return 'Newsletter';
+  if (automated && (senderMatches(email, NEWSLETTER_DOMAINS) ||
+                    NEWSLETTER_SUBJECT.test(subject))) {
+    return pick('Newsletter', 'bulk + newsletter sender/subject');
   }
 
-  // 6a - any remaining bulk mail is noise (real humans don't send
-  //       List-Unsubscribe, so this is safe).
-  if (bulk) return 'Noise';
+  // 6a - any remaining automated/bulk mail is noise (a person's 1:1 message
+  //      carries no automation markers, so this is safe).
+  if (automated) return pick('Noise', 'bulk/automated');
 
-  // 6b - cold/marketing that omits List-Unsubscribe (1:1-looking outreach).
+  // 6b - cold/marketing without machine markers.
   if (senderMatches(email, NOISE_DOMAINS) || NOISE_SUBJECT.test(subject)) {
-    return 'Noise';
+    return pick('Noise', 'marketing sender/subject');
   }
 
   // 7 - default: a human wrote to you and is waiting.
-  return 'Reply-needed';
+  return pick('Reply-needed', 'human');
+}
+
+/** Small helper so classify() reads cleanly. */
+function pick(label, reason) {
+  return { label: label, reason: reason };
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -252,13 +277,21 @@ function senderMatches(email, patterns) {
   return false;
 }
 
-/** True if the message carries a List-Unsubscribe header (a bulk-mail marker). */
-function hasListUnsubscribe(msg) {
+/**
+ * True if the message carries machine-automation markers (List-Unsubscribe,
+ * Auto-Submitted: auto*, Precedence: bulk/list/auto, X-Auto-Response-Suppress).
+ * These are present on automated/bulk mail and absent on a person's 1:1 reply -
+ * the key to telling an ATS blast from a recruiter who actually wrote to you.
+ */
+function isAutomated(msg) {
   try {
     var raw = msg.getRawContent() || '';
     var headerEnd = raw.indexOf('\r\n\r\n');
-    var headers = (headerEnd === -1 ? raw : raw.slice(0, headerEnd)).toLowerCase();
-    return headers.indexOf('list-unsubscribe:') !== -1;
+    var headers = (headerEnd === -1 ? raw : raw.slice(0, headerEnd));
+    // Normalize line endings so the leading-\n anchors in AUTOMATION_HEADERS
+    // match regardless of CRLF vs LF, and prepend one so the first header line
+    // can match too.
+    return AUTOMATION_HEADERS.test('\n' + headers.replace(/\r\n/g, '\n'));
   } catch (e) {
     return false;
   }

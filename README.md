@@ -16,9 +16,23 @@ inbox; the labels just make the important stuff easy to find.
 | **Newsletter** | Newsletters / industry digests (beehiiv, Substack, Polymarket, Google Scholar alerts…). |
 | **Noise** | Cold outreach / marketing. |
 
-A **real recruiter writing from their own company domain** goes to **Reply-needed**.
-Anything from an ATS platform (Greenhouse, Lever, Ashby, Workable, iCIMS, BambooHR…) or any
-"thanks for applying / application received / next steps" confirmation goes to **Job-search**.
+### Telling an automated ATS blast from a real recruiter
+
+Recruiters sometimes message you *through* the ATS (same domain as the automated mail), so
+subject + sender alone can't tell them apart. The tool instead checks the **machine-automation
+headers** that systems stamp on automated mail but a person's 1:1 message never carries:
+`List-Unsubscribe`, `Auto-Submitted: auto-generated`, `Precedence: bulk`,
+`X-Auto-Response-Suppress`.
+
+For mail from an ATS / job-board domain (Greenhouse, Lever, Ashby, Workable, iCIMS, BambooHR,
+LinkedIn jobs, Indeed…):
+- has a machine-automation marker, **or** an obvious confirmation/rejection subject
+  ("thanks for applying", "application received/status") → **Job-search**;
+- **no** markers and not a stock confirmation → **Reply-needed** (a recruiter likely typed it).
+
+A recruiter writing from their own company domain isn't on an ATS domain at all, so they always
+land in **Reply-needed**. The dry-run log prints the reason for each decision (e.g.
+`(human via ATS (no machine markers))`) so you can verify the split on your real mail.
 
 ## How classification works
 
