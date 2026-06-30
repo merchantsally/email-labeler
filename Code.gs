@@ -40,16 +40,23 @@ var MONEY_DOMAINS = [
 ];
 var MONEY_SUBJECT = /invoice|receipt|statement|payment (received|due)|tax|CRA/i;
 
-// Job-search: ATS / job-board senders. Mix of full addresses and domains.
+// Job-search: ATS / job-board platform senders. Mail from these is essentially
+// always automated, so it always goes to Job-search. Real recruiters who write
+// you personally use their own company domain (not listed here), so they fall
+// through to Reply-needed. Mix of full addresses and domains.
 var JOB_DOMAINS = [
-  'greenhouse-mail.io', 'hire.lever.co', 'ashbyhq.com', 'app.bamboohr.com',
-  'jobs-noreply@linkedin.com', 'messages-noreply@linkedin.com',
-  'smartrecruiters.com', 'applytojob.com', 'myworkdayjobs.com', 'workday.com',
-  'hi.wellfound.com', 'jobleads.com', 'housesigma.com', 'getgarner.com',
-  'icims.com'
+  'greenhouse-mail.io', 'greenhouse.io', 'hire.lever.co', 'lever.co',
+  'ashbyhq.com', 'app.bamboohr.com', 'jobs-noreply@linkedin.com',
+  'messages-noreply@linkedin.com', 'smartrecruiters.com', 'applytojob.com',
+  'myworkdayjobs.com', 'workday.com', 'hi.wellfound.com', 'jobleads.com',
+  'housesigma.com', 'getgarner.com', 'icims.com', 'workablemail.com',
+  'workable.com', 'hireology.com', 'clearcompany.com', 'newtonsoftware.com',
+  'jobgether.com', 'indeed.com', 'jobalert.indeed.com', 'methodrecruiting.com',
+  'remotehunter.com', 'fractionaljobs.io', 'jobvite.com'
 ];
-// An address is "automated" (vs a real recruiter replying) if it looks like this.
-var AUTOMATED_PREFIX = /(^|[._-])(no-?reply|donotreply|jobs-noreply|notifications?|mailer|noreply)/i;
+// Application-confirmation subjects, to catch company career addresses (e.g.
+// careers@somecompany.com) that aren't on a known ATS platform.
+var JOB_SUBJECT = /thank(s| you) for (applying|your (interest|application))|application (was |has been )?received|received your (application|resume)|application (status|follow.?up|update)|reviewing your application|for your application|your application (was|has been|is)|\bcandidacy\b|next steps/i;
 
 // Newsletter: editorial / digest senders.
 var NEWSLETTER_DOMAINS = [
@@ -183,10 +190,11 @@ function classify(msg, clientSenders, strataSenders) {
     return 'Money-Admin';
   }
 
-  // 4 - job-search vs a real recruiter replying.
-  if (senderMatches(email, JOB_DOMAINS)) {
-    var local = email.split('@')[0];
-    return AUTOMATED_PREFIX.test(local) ? 'Job-search' : 'Reply-needed';
+  // 4 - job-search: ATS / job-board platform, or an application confirmation
+  //     from a company career address. Real recruiters writing from their own
+  //     company domain don't match either and fall through to Reply-needed.
+  if (senderMatches(email, JOB_DOMAINS) || JOB_SUBJECT.test(subject)) {
+    return 'Job-search';
   }
 
   // Bulk-mail signal, computed once (raw fetch is the expensive part).

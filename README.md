@@ -16,8 +16,9 @@ inbox; the labels just make the important stuff easy to find.
 | **Newsletter** | Newsletters / industry digests (beehiiv, Substack, Polymarket, Google Scholar alerts…). |
 | **Noise** | Cold outreach / marketing. |
 
-A **real recruiter replying personally** (not a `no-reply` address) goes to **Reply-needed**,
-not Job-search.
+A **real recruiter writing from their own company domain** goes to **Reply-needed**.
+Anything from an ATS platform (Greenhouse, Lever, Ashby, Workable, iCIMS, BambooHR…) or any
+"thanks for applying / application received / next steps" confirmation goes to **Job-search**.
 
 ## How classification works
 
