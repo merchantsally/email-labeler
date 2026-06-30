@@ -10,7 +10,7 @@ inbox; the labels just make the important stuff easy to find.
 |---|---|
 | **Clients** | Permanent clients. **Sticky by sender** — you label a few by hand, and all future mail from those addresses is auto-labeled `Clients` forever. Always wins. |
 | **Strata** | Your strata group. Same sticky-by-sender behavior as Clients. Always wins. |
-| **Reply-needed** | A real human wrote to you and is waiting. The default for personal mail. |
+| **Reply-needed** | A real human wrote to you and is waiting. The default for personal mail. Also keeps **account/security notices** (login codes, security alerts, ToS) visible here even though they're automated. |
 | **Job-search** | Automated job alerts + "application received / update on your application" confirmations (Ashby, Greenhouse, Lever, BambooHR, LinkedIn jobs, Workday, SmartRecruiters, Wellfound…). |
 | **Money-Admin** | Questrade, CRA, banks (Scotiabank, RBC, TD, BMO, CIBC, Tangerine, Wealthsimple), invoices/receipts. |
 | **Newsletter** | Newsletters / industry digests (beehiiv, Substack, Polymarket, Google Scholar alerts…). |

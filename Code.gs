@@ -52,19 +52,26 @@ var JOB_DOMAINS = [
   'housesigma.com', 'getgarner.com', 'icims.com', 'workablemail.com',
   'workable.com', 'hireology.com', 'clearcompany.com', 'newtonsoftware.com',
   'jobgether.com', 'indeed.com', 'jobalert.indeed.com', 'methodrecruiting.com',
-  'remotehunter.com', 'fractionaljobs.io', 'jobvite.com'
+  'remotehunter.com', 'fractionaljobs.io', 'jobvite.com', 'gem.com',
+  'ceipalmail.com', 'lightspeedhq.com'
 ];
 // Obvious application-confirmation / rejection / status subjects. These are
 // always automated no matter who "sent" them, so they go to Job-search even
 // without machine markers (and catch company career addresses like
 // careers@somecompany.com that aren't on a known ATS platform).
-var JOB_CONFIRMATION = /thank(s| you) for (applying|your (interest|application))|application (was |has been )?received|received your (application|resume)|application (status|follow.?up|update)|reviewing your application|for your application|your application (was|has been|is)|\bcandidacy\b|verify your candidate|candidate account/i;
+var JOB_CONFIRMATION = /thank(s| you) for (applying|your (interest|application))|for your interest|application (was |has been )?received|received your (application|resume)|application (status|follow.?up|update)|reviewing your application|for your application|your application (was|has been|is)|\bcandidacy\b|verify your candidate|candidate account|demographic survey/i;
 
 // Machine-automation header markers: present on bulk/automated mail, absent on
 // a person's 1:1 message (even one sent through an ATS). This is what lets us
 // tell an automated ATS blast from a recruiter actually writing to you.
 var AUTOMATION_HEADERS =
   /\nlist-unsubscribe:|\nauto-submitted:\s*auto|\nprecedence:\s*(bulk|list|junk|auto)|\nx-auto-response-suppress:/i;
+
+// Account / security notices (login codes, security alerts, ToS) -> kept in
+// Reply-needed so they stay visible, even though they're automated (many carry
+// List-Unsubscribe). Matched only for non-job senders.
+var ACCOUNT_DOMAINS = ['github.com', 'accounts.google.com', 'google-noreply@google.com'];
+var ACCOUNT_SUBJECT = /security alert|verification code|verify your (email|account|identity|sign)|sign-?in code|\bpassword\b|two-factor|\b2fa\b|personal access token|new (sign-?in|login|device)|terms of service|privacy policy|suspicious (sign|login|activity)/i;
 
 // Newsletter: editorial / digest senders.
 var NEWSLETTER_DOMAINS = [
@@ -206,6 +213,13 @@ function classify(msg, clientSenders, strataSenders) {
   var onAts = senderMatches(email, JOB_DOMAINS);
   var confirmation = JOB_CONFIRMATION.test(subject);
 
+  // 3b - account / security notices stay in Reply-needed (visible), even though
+  //      automated. Only for non-job senders, so "verify your candidate account"
+  //      from an ATS isn't caught here.
+  if (!onAts && (senderMatches(email, ACCOUNT_DOMAINS) || ACCOUNT_SUBJECT.test(subject))) {
+    return pick('Reply-needed', 'account/security notice');
+  }
+
   // 4a - application confirmation from a company career address (not a known
   //      ATS platform) - always automated regardless of headers.
   if (!onAts && confirmation) return pick('Job-search', 'application confirmation');
@@ -220,10 +234,13 @@ function classify(msg, clientSenders, strataSenders) {
     return pick('Reply-needed', 'human via ATS (no machine markers)');
   }
 
-  // 5 - newsletters.
-  if (automated && (senderMatches(email, NEWSLETTER_DOMAINS) ||
-                    NEWSLETTER_SUBJECT.test(subject))) {
-    return pick('Newsletter', 'bulk + newsletter sender/subject');
+  // 5 - newsletters. Known newsletter senders count even without machine
+  //     markers (e.g. Google Scholar alerts); subject-only needs the marker.
+  if (senderMatches(email, NEWSLETTER_DOMAINS)) {
+    return pick('Newsletter', 'newsletter sender');
+  }
+  if (automated && NEWSLETTER_SUBJECT.test(subject)) {
+    return pick('Newsletter', 'bulk + newsletter subject');
   }
 
   // 6a - any remaining automated/bulk mail is noise (a person's 1:1 message
