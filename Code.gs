@@ -93,7 +93,7 @@ var NOISE_SUBJECT = /sale|% off|\boff\b|deal|discount|limited time|last chance|f
 
 var MANAGED_LABELS = [
   'Clients', 'Strata', 'Reply-needed', 'Job-search',
-  'Money-Admin', 'Newsletter', 'Noise'
+  'Money-Admin', 'Newsletter', 'Noise', 'Verification'
 ];
 
 /**
@@ -213,11 +213,11 @@ function classify(msg, clientSenders, strataSenders) {
   var onAts = senderMatches(email, JOB_DOMAINS);
   var confirmation = JOB_CONFIRMATION.test(subject);
 
-  // 3b - account / security notices stay in Reply-needed (visible), even though
-  //      automated. Only for non-job senders, so "verify your candidate account"
-  //      from an ATS isn't caught here.
+  // 3b - account / security notices: important to see, but never need a reply.
+  //      Their own Verification label. Only for non-job senders, so "verify your
+  //      candidate account" from an ATS isn't caught here.
   if (!onAts && (senderMatches(email, ACCOUNT_DOMAINS) || ACCOUNT_SUBJECT.test(subject))) {
-    return pick('Reply-needed', 'account/security notice');
+    return pick('Verification', 'account/security notice');
   }
 
   // 4a - application confirmation from a company career address (not a known
