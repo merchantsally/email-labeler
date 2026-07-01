@@ -90,7 +90,9 @@ few subject keywords. All the sender/domain lists are **plain arrays at the top 
    Sanity-check these against your inbox.
 6. **Seed the sticky labels:** in Gmail, hand-label a few emails `Clients` and `Strata`
    (e.g. your `awmalliance.com` / strata contacts). Future mail from those senders is then
-   auto-matched.
+   auto-matched. The sticky lists are cached and refresh every ~6 hours
+   (`STICKY_REFRESH_MINUTES`) to stay under Gmail's daily quota — after labeling new
+   contacts, run the **`refreshSticky`** function once if you don't want to wait.
 7. When the dry-run output looks right, set **`DRY_RUN = false`** at the top of `Code.gs`,
    save, and you're live. The trigger does the rest every 10 minutes.
 

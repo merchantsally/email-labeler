@@ -24,8 +24,16 @@
 // When true, nothing is labeled - decisions are only written to the log.
 var DRY_RUN = true;
 
-// How far back to scan each run.
+// How far back to scan each run. Threads already carrying a managed label are
+// excluded automatically (see scanQuery), so each run only touches NEW mail -
+// this is what keeps Gmail API usage under the daily quota.
 var SCAN_QUERY = 'in:inbox newer_than:3d';
+
+// The sticky Clients/Strata sender lists are cached (in Script Properties) and
+// only rebuilt this often. Rebuilding scans every labeled thread, so doing it on
+// every 10-min run burns through the Gmail daily quota. A newly hand-labeled
+// Client/Strata sender takes effect on the next rebuild (or run refreshSticky()).
+var STICKY_REFRESH_MINUTES = 360; // 6 hours
 
 // Mail in these categories is marked as read (still stays in the inbox with its
 // label - nothing is archived). Remove a label from this list to keep it unread.
@@ -148,6 +156,9 @@ function setup() {
   });
   ScriptApp.newTrigger('run').timeBased().everyMinutes(10).create();
 
+  // Force the sticky sender cache to rebuild on the next run.
+  PropertiesService.getScriptProperties().deleteProperty('STICKY_AT');
+
   Logger.log('Setup complete. Trigger installed (every 10 min). DRY_RUN=' + DRY_RUN);
 }
 
@@ -156,19 +167,18 @@ function setup() {
  */
 function run() {
   var owner = (Session.getActiveUser().getEmail() || '').toLowerCase();
-  var clientSenders = buildStickySenders('Clients', owner);
-  var strataSenders = buildStickySenders('Strata', owner);
+  var sticky = getStickySenders(owner);
 
-  var threads = GmailApp.search(SCAN_QUERY, 0, 200);
+  // The query excludes managed labels, so only unprocessed threads come back -
+  // no need to re-fetch or re-check ones already labeled.
+  var threads = GmailApp.search(scanQuery(), 0, 100);
   var labelCache = {};
   var counts = {};
 
   threads.forEach(function (thread) {
-    if (hasManagedLabel(thread)) return; // already handled (auto or by hand)
-
     var msgs = thread.getMessages();
     var msg = msgs[msgs.length - 1]; // classify on the latest message
-    var decision = classify(msg, clientSenders, strataSenders);
+    var decision = classify(msg, sticky.clients, sticky.strata);
     var name = decision.label;
 
     counts[name] = (counts[name] || 0) + 1;
@@ -191,6 +201,44 @@ function run() {
 
   Logger.log((DRY_RUN ? '[DRY RUN] ' : '') + 'Processed ' + threads.length +
              ' threads. Breakdown: ' + JSON.stringify(counts));
+}
+
+/**
+ * Sticky Clients/Strata sender sets, cached in Script Properties and rebuilt at
+ * most every STICKY_REFRESH_MINUTES. Rebuilding scans every labeled thread, so
+ * caching is what keeps the 10-min trigger under the Gmail daily quota.
+ */
+function getStickySenders(owner) {
+  var props = PropertiesService.getScriptProperties();
+  var cached = props.getProperty('STICKY_JSON');
+  var at = Number(props.getProperty('STICKY_AT') || 0);
+  if (cached && (Date.now() - at) < STICKY_REFRESH_MINUTES * 60000) {
+    var c = JSON.parse(cached);
+    return { clients: c.clients || {}, strata: c.strata || {} };
+  }
+  var fresh = {
+    clients: buildStickySenders('Clients', owner),
+    strata: buildStickySenders('Strata', owner)
+  };
+  props.setProperty('STICKY_JSON', JSON.stringify(fresh));
+  props.setProperty('STICKY_AT', String(Date.now()));
+  return fresh;
+}
+
+/** Force the sticky lists to rebuild on the next run - run this by hand right
+ *  after labeling new Clients/Strata if you don't want to wait for the refresh. */
+function refreshSticky() {
+  PropertiesService.getScriptProperties().deleteProperty('STICKY_AT');
+  Logger.log('Sticky sender cache cleared - will rebuild on the next run.');
+}
+
+/** The scan query with every managed label excluded, so already-processed
+ *  threads never come back (this is the main Gmail-quota saver). */
+function scanQuery() {
+  var exclude = MANAGED_LABELS.map(function (n) {
+    return '-label:' + n.toLowerCase();
+  }).join(' ');
+  return SCAN_QUERY + ' ' + exclude;
 }
 
 /**
@@ -227,8 +275,14 @@ function classify(msg, clientSenders, strataSenders) {
     return pick('Money-Admin', 'money sender/subject');
   }
 
-  // Machine-automation signal, computed once (raw header fetch is the cost).
-  var automated = isAutomated(msg);
+  // Machine-automation signal - fetched lazily. getRawContent() is the most
+  // expensive Gmail call, so only pay it when a branch actually needs the header
+  // check (sender/subject-decided mail skips it entirely).
+  var _auto = null;
+  function automated() {
+    if (_auto === null) _auto = isAutomated(msg);
+    return _auto;
+  }
   var onAts = senderMatches(email, JOB_DOMAINS);
   var confirmation = JOB_CONFIRMATION.test(subject);
 
@@ -246,7 +300,7 @@ function classify(msg, clientSenders, strataSenders) {
   // 4b - mail from an ATS / job-board platform.
   if (onAts) {
     // Automated blast (alert, confirmation, rejection) -> Job-search.
-    if (automated) return pick('Job-search', 'ATS automated (machine headers)');
+    if (automated()) return pick('Job-search', 'ATS automated (machine headers)');
     if (confirmation) return pick('Job-search', 'ATS confirmation (subject)');
     // No machine markers and not a stock confirmation - genuinely ambiguous.
     // Ask OpenAI (if enabled); otherwise fall back to the safe side (visible).
@@ -260,13 +314,13 @@ function classify(msg, clientSenders, strataSenders) {
   if (senderMatches(email, NEWSLETTER_DOMAINS)) {
     return pick('Newsletter', 'newsletter sender');
   }
-  if (automated && NEWSLETTER_SUBJECT.test(subject)) {
+  if (automated() && NEWSLETTER_SUBJECT.test(subject)) {
     return pick('Newsletter', 'bulk + newsletter subject');
   }
 
   // 6a - any remaining automated/bulk mail is noise (a person's 1:1 message
   //      carries no automation markers, so this is safe).
-  if (automated) return pick('Noise', 'bulk/automated');
+  if (automated()) return pick('Noise', 'bulk/automated');
 
   // 6b - cold/marketing without machine markers.
   if (senderMatches(email, NOISE_DOMAINS) || NOISE_SUBJECT.test(subject)) {
@@ -389,13 +443,4 @@ function isAutomated(msg) {
   } catch (e) {
     return false;
   }
-}
-
-/** True if the thread already carries one of our managed labels. */
-function hasManagedLabel(thread) {
-  var names = thread.getLabels().map(function (l) { return l.getName(); });
-  for (var i = 0; i < MANAGED_LABELS.length; i++) {
-    if (names.indexOf(MANAGED_LABELS[i]) !== -1) return true;
-  }
-  return false;
 }
