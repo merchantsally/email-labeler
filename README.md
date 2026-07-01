@@ -84,33 +84,33 @@ few subject keywords. All the sender/domain lists are **plain arrays at the top 
      (emails kept). Gmail sometimes refuses programmatic label deletion — if the log
      says it couldn't, just delete those four by hand in **Gmail → Settings → Labels**
      (10 seconds),
-   - installs a trigger that runs every 10 minutes.
+   - installs hourly triggers (one per hour, 8am–8pm local time).
 5. Select **`run`** and click **Run**, then open **View → Logs**. You'll see lines like
    `would label [Job-search] <- no-reply@ashbyhq.com | Thank you for applying…`.
    Sanity-check these against your inbox.
 6. **Seed the sticky labels:** in Gmail, hand-label a few emails `Clients` and `Strata`
    (e.g. your `awmalliance.com` / strata contacts). Future mail from those senders is then
-   auto-matched. The sticky lists are cached and refresh every ~6 hours
+   auto-matched. The sticky lists are cached and refresh about once an hour
    (`STICKY_REFRESH_MINUTES`) to stay under Gmail's daily quota — after labeling new
    contacts, run the **`refreshSticky`** function once if you don't want to wait.
 7. When the dry-run output looks right, set **`DRY_RUN = false`** at the top of `Code.gs`,
-   save, and you're live. The trigger does the rest every 10 minutes.
+   save, and you're live. The triggers do the rest, hourly during the day.
 
 > Want to re-run setup later (e.g. after editing)? Just run `setup()` again — it's safe and
 > idempotent (won't duplicate labels or triggers).
 
 ## Scheduling (how the job runs on its own)
 
-You don't schedule anything by hand — **`setup()` installs a time-driven trigger** that runs
-`run()` every 10 minutes (`ScriptApp.newTrigger('run').timeBased().everyMinutes(10)`). Google
-runs it in the cloud whether or not your computer is on.
+You don't schedule anything by hand — **`setup()` installs the triggers** that run `run()`
+**once an hour from 8am to 8pm** local time (America/Vancouver, per the manifest). It creates
+one time trigger per hour in that window. Google runs them in the cloud whether or not your
+computer is on. This ~13-runs/day cadence also keeps Gmail API usage well under quota.
 
-- **See / manage it:** Apps Script editor → **Triggers** (⏰ clock icon in the left sidebar).
-- **Change the cadence:** edit `.everyMinutes(10)` to `.everyMinutes(5)`, `.everyHours(1)`, etc.
-  (valid minute values are 1, 5, 10, 15, 30), then run `setup()` again — it removes the old
-  trigger and installs the new one.
-- **Pause it:** delete the trigger from the Triggers page (or set `DRY_RUN = true` to keep it
-  running but stop it from changing anything).
+- **See / manage them:** Apps Script editor → **Triggers** (⏰ clock icon in the left sidebar).
+- **Change the window:** edit `RUN_START_HOUR` / `RUN_END_HOUR` at the top of `Code.gs`, then
+  run `setup()` again — it removes the old triggers and installs the new set.
+- **Pause it:** delete the triggers from the Triggers page (or set `DRY_RUN = true` to keep them
+  running but stop them from changing anything).
 
 ## Tuning
 

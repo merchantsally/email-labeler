@@ -14,7 +14,7 @@
  *   Noise         - cold outreach / marketing
  *
  * FIRST RUN: keep DRY_RUN = true, run setup() once (creates labels, deletes old
- * ones, installs the 10-min trigger), then run run() and read View > Logs to see
+ * ones, installs the hourly triggers), then run run() and read View > Logs to see
  * how mail WOULD be classified. When happy, set DRY_RUN = false.
  * -----------------------------------------------------------------------------
  */
@@ -29,11 +29,17 @@ var DRY_RUN = true;
 // this is what keeps Gmail API usage under the daily quota.
 var SCAN_QUERY = 'in:inbox newer_than:3d';
 
+// The job runs once an hour during these LOCAL hours (America/Vancouver, per the
+// manifest timeZone). Hourly 8am-8pm = 8 through 20. setup() creates one trigger
+// per hour in this range; change these and re-run setup() to adjust the window.
+var RUN_START_HOUR = 8;
+var RUN_END_HOUR = 20;
+
 // The sticky Clients/Strata sender lists are cached (in Script Properties) and
-// only rebuilt this often. Rebuilding scans every labeled thread, so doing it on
-// every 10-min run burns through the Gmail daily quota. A newly hand-labeled
-// Client/Strata sender takes effect on the next rebuild (or run refreshSticky()).
-var STICKY_REFRESH_MINUTES = 360; // 6 hours
+// only rebuilt this often. Rebuilding scans every labeled thread. A newly hand-
+// labeled Client/Strata sender takes effect on the next rebuild (or run
+// refreshSticky() to apply it right away).
+var STICKY_REFRESH_MINUTES = 60; // 1 hour
 
 // Mail in these categories is marked as read (still stays in the inbox with its
 // label - nothing is archived). Remove a label from this list to keep it unread.
@@ -150,20 +156,24 @@ function setup() {
                '  -> delete these by hand in Gmail > Settings > Labels.');
   }
 
-  // Reinstall the 10-minute trigger (remove any old copies first).
+  // Reinstall triggers (remove any old copies first): one per hour in the window
+  // so the job runs hourly from RUN_START_HOUR to RUN_END_HOUR, local time.
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'run') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('run').timeBased().everyMinutes(10).create();
+  for (var h = RUN_START_HOUR; h <= RUN_END_HOUR; h++) {
+    ScriptApp.newTrigger('run').timeBased().everyDays(1).atHour(h).create();
+  }
 
   // Force the sticky sender cache to rebuild on the next run.
   PropertiesService.getScriptProperties().deleteProperty('STICKY_AT');
 
-  Logger.log('Setup complete. Trigger installed (every 10 min). DRY_RUN=' + DRY_RUN);
+  Logger.log('Setup complete. Triggers installed (hourly ' + RUN_START_HOUR +
+             ':00-' + RUN_END_HOUR + ':00 local). DRY_RUN=' + DRY_RUN);
 }
 
 /**
- * Main entry point - called by the trigger every 10 minutes.
+ * Main entry point - called once an hour by the time triggers.
  */
 function run() {
   var owner = (Session.getActiveUser().getEmail() || '').toLowerCase();
@@ -206,7 +216,7 @@ function run() {
 /**
  * Sticky Clients/Strata sender sets, cached in Script Properties and rebuilt at
  * most every STICKY_REFRESH_MINUTES. Rebuilding scans every labeled thread, so
- * caching is what keeps the 10-min trigger under the Gmail daily quota.
+ * caching is what keeps Gmail API usage under the daily quota.
  */
 function getStickySenders(owner) {
   var props = PropertiesService.getScriptProperties();
