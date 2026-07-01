@@ -1,8 +1,8 @@
 /**
  * Gmail auto-labeler
  * -----------------------------------------------------------------------------
- * A "label only" tool: it tags incoming inbox mail into a fixed scheme.
- * It never archives, moves, deletes, or marks anything read.
+ * Tags incoming inbox mail into a fixed scheme. It never archives, moves, or
+ * deletes. It marks Job-search / Newsletter / Noise as read (see MARK_READ_LABELS).
  *
  * Categories:
  *   Clients       - permanent clients (sticky by sender, you seed by hand)
@@ -26,6 +26,21 @@ var DRY_RUN = true;
 
 // How far back to scan each run.
 var SCAN_QUERY = 'in:inbox newer_than:3d';
+
+// Mail in these categories is marked as read (still stays in the inbox with its
+// label - nothing is archived). Remove a label from this list to keep it unread.
+var MARK_READ_LABELS = ['Job-search', 'Newsletter', 'Noise'];
+
+// Optional OpenAI fallback for the ONE genuinely ambiguous case: an ATS / job-
+// board email with no automation markers and no confirmation subject, where only
+// the body reveals whether a real recruiter wrote it (-> Reply-needed) or it's an
+// automated nudge (-> Job-search). Everything else uses the fast rules and never
+// calls OpenAI. Set USE_LLM_FALLBACK = true AFTER adding your API key in
+// Project Settings > Script Properties as OPENAI_API_KEY (needs a real
+// platform.openai.com API key with credit - a ChatGPT login won't work). The key
+// is read from Script Properties, never hardcoded (this file is public on GitHub).
+var USE_LLM_FALLBACK = false;
+var OPENAI_MODEL = 'gpt-4o-mini';
 
 // Old labels to remove during setup() (emails are kept; only the label is gone).
 var LABELS_TO_DELETE = ['Tech', 'Tech/Crypto', 'Stocks', 'Scheduled'];
@@ -158,8 +173,11 @@ function run() {
 
     counts[name] = (counts[name] || 0) + 1;
 
+    var markRead = MARK_READ_LABELS.indexOf(name) !== -1;
+
     if (DRY_RUN) {
-      Logger.log('would label [' + name + ']  (' + decision.reason + ')  <- ' +
+      Logger.log('would label [' + name + ']' + (markRead ? ' +read' : '') +
+                 '  (' + decision.reason + ')  <- ' +
                  msg.getFrom() + '  |  ' + msg.getSubject());
     } else {
       if (!labelCache[name]) {
@@ -167,6 +185,7 @@ function run() {
                            GmailApp.createLabel(name);
       }
       thread.addLabel(labelCache[name]);
+      if (markRead) thread.markRead();
     }
   });
 
@@ -229,8 +248,10 @@ function classify(msg, clientSenders, strataSenders) {
     // Automated blast (alert, confirmation, rejection) -> Job-search.
     if (automated) return pick('Job-search', 'ATS automated (machine headers)');
     if (confirmation) return pick('Job-search', 'ATS confirmation (subject)');
-    // No machine markers and not a stock confirmation: a recruiter likely
-    // typed this through the ATS and wants a reply.
+    // No machine markers and not a stock confirmation - genuinely ambiguous.
+    // Ask OpenAI (if enabled); otherwise fall back to the safe side (visible).
+    var llm = classifyAmbiguousJob(msg);
+    if (llm) return llm;
     return pick('Reply-needed', 'human via ATS (no machine markers)');
   }
 
@@ -259,6 +280,62 @@ function classify(msg, clientSenders, strataSenders) {
 /** Small helper so classify() reads cleanly. */
 function pick(label, reason) {
   return { label: label, reason: reason };
+}
+
+/**
+ * OpenAI fallback for the ambiguous ATS case. Reads the API key from Script
+ * Properties (OPENAI_API_KEY) - never hardcoded. Returns a pick() of
+ * 'Job-search' or 'Reply-needed', or null if disabled / no key / any error
+ * (the caller then falls back to the safe default, Reply-needed).
+ */
+function classifyAmbiguousJob(msg) {
+  if (!USE_LLM_FALLBACK) return null;
+  var key = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
+  if (!key) return null;
+
+  var body = (msg.getPlainBody() || '').replace(/\s+/g, ' ').slice(0, 800);
+  var system =
+    "You triage a job-seeker's inbox. An email arrived from an applicant-tracking " +
+    'or job-board system. Decide whether a real human is waiting on a reply.\n' +
+    '- "Reply-needed": a recruiter or person wrote personally and expects a ' +
+    'response (proposing a call, asking a question, scheduling an interview).\n' +
+    '- "Job-search": automated or bulk mail with no human waiting (application ' +
+    'received/rejected, status update, job alert, survey, account/verification).\n' +
+    'Reply with JSON only: {"label":"Reply-needed" or "Job-search","reason":"<=6 words"}.';
+
+  var payload = {
+    model: OPENAI_MODEL,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: 'From: ' + msg.getFrom() + '\nSubject: ' +
+                               (msg.getSubject() || '') + '\n\n' + body }
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0,
+    max_tokens: 40
+  };
+
+  try {
+    var resp = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + key },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    if (resp.getResponseCode() !== 200) {
+      Logger.log('OpenAI error ' + resp.getResponseCode() + ': ' + resp.getContentText());
+      return null;
+    }
+    var out = JSON.parse(JSON.parse(resp.getContentText()).choices[0].message.content);
+    var label = out.label === 'Job-search' ? 'Job-search'
+              : out.label === 'Reply-needed' ? 'Reply-needed' : null;
+    if (!label) return null;
+    return pick(label, 'LLM: ' + (out.reason || 'openai'));
+  } catch (e) {
+    Logger.log('OpenAI exception: ' + e);
+    return null;
+  }
 }
 
 // ---- helpers ----------------------------------------------------------------
